@@ -4,8 +4,6 @@ A PyTorch demo of Llama 3.1 8B activation steering for horror-style story genera
 
 This project shows how to build a simple activation steering vector from paired writing examples, then apply that vector during autoregressive generation to shift a neutral story prompt toward eerie, PG-13 horror style while preserving the prompt's core subject.
 
-The implementation is intentionally public, educational, and self-contained. It does not include private lab code, private datasets, unpublished research results, or University of Waterloo research-repo specifics.
-
 ## What This Demonstrates
 
 - Loading `meta-llama/Llama-3.1-8B-Instruct` with Hugging Face Transformers and PyTorch.
