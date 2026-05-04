@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and local config
+.env
+.venv/
+venv/
+
+# Generated demo artifacts
+steering_vectors/
+outputs/
+
+# Model weights and large checkpoints
+models/
+checkpoints/
+*.safetensors
+*.bin
+*.ckpt
+*.pth
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
