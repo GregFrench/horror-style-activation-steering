@@ -45,7 +45,7 @@ In practice, layer choice, pooling strategy, vector scale, and alpha matter. Thi
 Python 3.10+ is recommended.
 
 ```bash
-git clone https://github.com/your-username/horror-style-activation-steering.git
+git clone https://github.com/GregFrench/horror-style-activation-steering.git
 cd horror-style-activation-steering
 python -m venv .venv
 source .venv/bin/activate
