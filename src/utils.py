@@ -102,14 +102,29 @@ def load_steering_vector(path: str | Path) -> Any:
     field, as produced by `scripts/build_steering_vector.py`.
     """
 
-    import torch
-
-    payload = torch.load(Path(path), map_location="cpu")
+    payload = load_steering_payload(path)
     if isinstance(payload, dict):
         if "vector" not in payload:
             raise KeyError(f"Steering payload at {path} does not contain a 'vector' key.")
         return payload["vector"]
     return payload
+
+
+def load_steering_payload(path: str | Path) -> Any:
+    """Load a steering vector payload from disk.
+
+    `weights_only=True` avoids unpickling arbitrary Python objects on newer
+    PyTorch versions. The fallback keeps the helper compatible with older
+    PyTorch releases that do not expose that argument.
+    """
+
+    import torch
+
+    file_path = Path(path)
+    try:
+        return torch.load(file_path, map_location="cpu", weights_only=True)
+    except TypeError:
+        return torch.load(file_path, map_location="cpu")
 
 
 def write_text(path: str | Path, text: str) -> Path:

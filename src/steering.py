@@ -74,18 +74,96 @@ def _replace_hidden_states(layer_output: Any, hidden_states: torch.Tensor) -> An
 def _pool_hidden_states(
     hidden_states: torch.Tensor,
     pooling: PoolingStrategy,
+    token_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    torch = _import_torch()
+
     if hidden_states.ndim != 3:
         raise ValueError(
             f"Expected hidden states with shape [batch, seq, hidden], got {hidden_states.shape}."
         )
 
+    if token_mask is not None:
+        if token_mask.shape != hidden_states.shape[:2]:
+            raise ValueError(
+                "Token mask shape must match [batch, seq] hidden-state prefix: "
+                f"{tuple(token_mask.shape)} != {tuple(hidden_states.shape[:2])}."
+            )
+        mask = token_mask.to(device=hidden_states.device, dtype=torch.bool)
+    else:
+        mask = None
+
     if pooling == "last_token":
+        if mask is not None:
+            positions = torch.arange(hidden_states.shape[1], device=hidden_states.device)
+            masked_positions = torch.where(mask, positions.unsqueeze(0), -1)
+            token_indices = masked_positions.max(dim=1).values.clamp(min=0)
+            batch_indices = torch.arange(
+                hidden_states.shape[0],
+                device=hidden_states.device,
+            )
+            return hidden_states[batch_indices, token_indices, :]
         return hidden_states[:, -1, :]
+
     if pooling == "mean_tokens":
+        if mask is not None:
+            weights = mask.to(dtype=hidden_states.dtype).unsqueeze(-1)
+            summed = (hidden_states * weights).sum(dim=1)
+            denominator = weights.sum(dim=1).clamp(min=1.0)
+            return summed / denominator
         return hidden_states.mean(dim=1)
 
     raise ValueError("pooling must be either 'last_token' or 'mean_tokens'.")
+
+
+def _build_pooling_mask(
+    tokenizer: Any,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    *,
+    exclude_special_tokens: bool,
+) -> torch.Tensor:
+    """Build a token mask for activation pooling.
+
+    Chat-formatted samples often end with special tokens such as `<|eot_id|>`.
+    Excluding them makes `last_token` mean "last content token" rather than
+    "last chat delimiter token".
+    """
+
+    torch = _import_torch()
+
+    if attention_mask is None:
+        mask = torch.ones_like(input_ids, dtype=torch.bool)
+    else:
+        mask = attention_mask.to(dtype=torch.bool)
+
+    if exclude_special_tokens:
+        special_ids = set(getattr(tokenizer, "all_special_ids", []) or [])
+        eot_id = tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        if isinstance(eot_id, int) and eot_id >= 0:
+            special_ids.add(eot_id)
+
+        if special_ids:
+            special_tensor = torch.tensor(
+                sorted(special_ids),
+                device=input_ids.device,
+                dtype=input_ids.dtype,
+            )
+            special_mask = (input_ids.unsqueeze(-1) == special_tensor).any(dim=-1)
+            mask = mask & ~special_mask
+
+    # If a very short input is all special tokens, fall back to the attention
+    # mask so pooling still returns a well-defined activation.
+    empty_rows = mask.sum(dim=1) == 0
+    if empty_rows.any():
+        fallback = (
+            attention_mask.to(dtype=torch.bool)
+            if attention_mask is not None
+            else torch.ones_like(input_ids, dtype=torch.bool)
+        )
+        mask = torch.where(empty_rows.unsqueeze(1), fallback, mask)
+
+    return mask
 
 
 class ActivationSteering:
@@ -105,6 +183,7 @@ class ActivationSteering:
         self.alpha = alpha
         self.steer_prompt = steer_prompt
         self._handle: Any | None = None
+        self._forward_calls = 0
 
         vector = steering_vector.detach()
         if vector.ndim == 2 and vector.shape[0] == 1:
@@ -118,6 +197,7 @@ class ActivationSteering:
     def _hook(self, module: Any, args: tuple[Any, ...], output: Any) -> Any:
         torch = _import_torch()
         hidden_states = _extract_hidden_states(output)
+        self._forward_calls += 1
         if hidden_states.ndim != 3:
             raise ValueError(
                 f"Expected layer hidden states [batch, seq, hidden], got {hidden_states.shape}."
@@ -131,9 +211,14 @@ class ActivationSteering:
             )
 
         # During cached generation, the prompt prefill pass usually has seq_len > 1,
-        # while later autoregressive steps have seq_len == 1. By default we avoid
-        # steering the full prompt pass and steer only generated-token steps.
-        if not self.steer_prompt and hidden_states.shape[1] != 1:
+        # while later autoregressive steps have seq_len == 1. With cache disabled,
+        # later generation steps may also have seq_len > 1, so only the first
+        # forward pass is skipped by default.
+        if (
+            not self.steer_prompt
+            and self._forward_calls == 1
+            and hidden_states.shape[1] > 1
+        ):
             return output
 
         steered = hidden_states.clone()
@@ -151,6 +236,7 @@ class ActivationSteering:
             raise IndexError(
                 f"Layer {self.layer} is out of range for a model with {len(layers)} layers."
             )
+        self._forward_calls = 0
         self._handle = layers[self.layer].register_forward_hook(self._hook)
         return self
 
@@ -174,6 +260,7 @@ def collect_layer_activations(
     pooling: PoolingStrategy = "last_token",
     max_length: int = 512,
     use_chat_template: bool = True,
+    exclude_special_tokens: bool = True,
     show_progress: bool = True,
 ) -> torch.Tensor:
     """Collect pooled activations from a transformer layer for a list of texts."""
@@ -190,10 +277,11 @@ def collect_layer_activations(
     device = get_input_device(model)
     activations: list[torch.Tensor] = []
     captured: list[torch.Tensor] = []
+    pooling_mask: torch.Tensor | None = None
 
     def capture_hook(module: Any, args: tuple[Any, ...], output: Any) -> Any:
         hidden_states = _extract_hidden_states(output)
-        pooled = _pool_hidden_states(hidden_states, pooling)
+        pooled = _pool_hidden_states(hidden_states, pooling, token_mask=pooling_mask)
         captured.append(pooled.detach().float().cpu())
         return output
 
@@ -222,6 +310,12 @@ def collect_layer_activations(
                 max_length=max_length,
             )
             encoded = {key: value.to(device) for key, value in encoded.items()}
+            pooling_mask = _build_pooling_mask(
+                tokenizer,
+                encoded["input_ids"],
+                encoded.get("attention_mask"),
+                exclude_special_tokens=exclude_special_tokens,
+            )
 
             with torch.inference_mode():
                 model(**encoded, use_cache=False)

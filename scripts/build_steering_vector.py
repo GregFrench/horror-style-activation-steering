@@ -47,6 +47,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not wrap examples in the tokenizer chat template.",
     )
+    parser.add_argument(
+        "--include-special-tokens",
+        action="store_true",
+        help=(
+            "Include chat delimiter and other special tokens when pooling activations. "
+            "By default, pooling uses content tokens only."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -78,6 +86,7 @@ def main() -> None:
         pooling=args.pooling,
         max_length=args.max_length,
         use_chat_template=not args.use_raw_text,
+        exclude_special_tokens=not args.include_special_tokens,
     )
 
     print(f"Collecting {len(negative_examples)} neutral-negative activations...")
@@ -89,6 +98,7 @@ def main() -> None:
         pooling=args.pooling,
         max_length=args.max_length,
         use_chat_template=not args.use_raw_text,
+        exclude_special_tokens=not args.include_special_tokens,
     )
 
     # Positive minus negative gives a direction from neutral tone toward the
@@ -108,11 +118,14 @@ def main() -> None:
         "num_positive": len(positive_examples),
         "num_negative": len(negative_examples),
         "use_chat_template": not args.use_raw_text,
+        "exclude_special_tokens": not args.include_special_tokens,
+        "vector_norm": float(horror_vector.norm().item()),
     }
     torch.save(payload, output_path)
 
     print(f"Saved steering vector: {output_path}")
     print(f"Vector shape: {tuple(horror_vector.shape)}")
+    print(f"Vector L2 norm: {payload['vector_norm']:.4f}")
 
 
 if __name__ == "__main__":

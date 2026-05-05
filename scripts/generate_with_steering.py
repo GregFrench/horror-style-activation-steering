@@ -41,6 +41,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also steer the prompt prefill pass. Default steers generated-token steps only.",
     )
+    parser.add_argument(
+        "--allow-layer-mismatch",
+        action="store_true",
+        help="Allow applying a saved vector whose recorded layer differs from --layer.",
+    )
     parser.add_argument("--save-output", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "outputs")
     return parser.parse_args()
@@ -52,11 +57,23 @@ def main() -> None:
     from src.generate import GenerationSettings, generate_response
     from src.model import load_model_and_tokenizer
     from src.steering import ActivationSteering
-    from src.utils import ensure_dir, load_steering_vector, slugify, timestamp_slug, write_text
+    from src.utils import (
+        ensure_dir,
+        load_steering_payload,
+        slugify,
+        timestamp_slug,
+        write_text,
+    )
 
     vector_path = args.vector_path or (
         REPO_ROOT / "steering_vectors" / f"horror_layer_{args.layer}.pt"
     )
+    if not vector_path.is_file():
+        raise SystemExit(
+            f"Steering vector not found: {vector_path}\n"
+            "Build one first, for example:\n"
+            f"  python scripts/build_steering_vector.py --layer {args.layer}"
+        )
 
     print(f"Loading model: {args.model_name}")
     model, tokenizer = load_model_and_tokenizer(
@@ -76,7 +93,21 @@ def main() -> None:
     baseline = generate_response(model, tokenizer, args.prompt, settings=settings)
 
     print(f"Loading steering vector: {vector_path}")
-    steering_vector = load_steering_vector(vector_path)
+    steering_payload = load_steering_payload(vector_path)
+    if isinstance(steering_payload, dict):
+        steering_vector = steering_payload["vector"]
+        saved_layer = steering_payload.get("layer")
+        if (
+            saved_layer is not None
+            and int(saved_layer) != args.layer
+            and not args.allow_layer_mismatch
+        ):
+            raise SystemExit(
+                f"Vector was built from layer {saved_layer}, but --layer is {args.layer}. "
+                "Use the matching layer or pass --allow-layer-mismatch deliberately."
+            )
+    else:
+        steering_vector = steering_payload
 
     print(f"Generating steered output with layer={args.layer}, alpha={args.alpha}...")
     with ActivationSteering(
