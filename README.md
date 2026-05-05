@@ -22,8 +22,6 @@ horror_vector = mean(horror_activations) - mean(neutral_activations)
 
 Activation steering is a small, inspectable intervention on a model's internal representations. Instead of fine-tuning model weights or adding a style instruction to the prompt, we estimate a direction in hidden-state space associated with a target behavior or style, then add that direction while the model generates.
 
-In this demo, the target behavior is not harmful content. It is a PG-13 horror writing style: suspense, atmosphere, ominous imagery, and tension. The goal is to preserve the subject of the original prompt while changing narrative tone.
-
 ## Method Overview
 
 1. Collect short positive examples in the target style.
