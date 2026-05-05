@@ -2,7 +2,7 @@
 
 A PyTorch demo of Llama 3.1 8B activation steering for horror-style story generation.
 
-This project shows how to build a simple activation steering vector from paired writing examples, then apply that vector during autoregressive generation to shift a neutral story prompt toward eerie, PG-13 horror style while preserving the prompt's core subject.
+This project shows how to build a simple activation steering vector from paired writing examples, then apply that vector during autoregressive generation to shift a neutral story prompt toward eerie, PG-13 horror style. The steering is designed to preserve the prompt's core subject, but preservation is an empirical behavior to check, not a guarantee.
 
 ## What This Demonstrates
 
@@ -28,7 +28,7 @@ Activation steering is a small, inspectable intervention on a model's internal r
 2. Collect short negative examples in a neutral style.
 3. Run both sets through the model.
 4. Capture hidden states at a configurable transformer layer.
-5. Pool each example's activation using either the last token or mean token representation.
+5. Pool each example's activation using either the last content token or mean content-token representation. Chat delimiter and other special tokens are excluded by default.
 6. Compute a vector from neutral style toward horror style.
 7. During generation, add `alpha * horror_vector` to the last-token hidden state at that layer.
 
@@ -38,7 +38,7 @@ The core intervention is deliberately small:
 hidden_states[:, -1, :] += alpha * steering_vector
 ```
 
-In practice, layer choice and alpha matter. This repository gives you the machinery to experiment without claiming that one layer or coefficient is universally best.
+In practice, layer choice, pooling strategy, vector scale, and alpha matter. This repository gives you the machinery to experiment without claiming that one layer or coefficient is universally best.
 
 ## Installation
 
@@ -88,6 +88,8 @@ steering_vectors/horror_layer_16.pt
 ```
 
 The saved payload includes the vector, layer, pooling strategy, model name, and example counts.
+
+By default, pooling ignores special tokens such as chat headers and end-of-turn delimiters. To inspect the more literal behavior, pass `--include-special-tokens`.
 
 ## Generate Baseline vs Steered Outputs
 
@@ -147,3 +149,11 @@ It reports:
 - Word count.
 - Counts of simple horror-atmosphere keywords.
 - A reminder that proper evaluation would require stronger metrics.
+
+## Implementation Notes
+
+- The generation hook skips the initial prompt prefill pass by default, then steers the last token representation on subsequent generation forwards. This keeps the prompt encoding mostly untouched while still working when cached generation is available.
+- If you want the first generated token to be affected too, pass `--steer-prompt`; the hook still modifies only the final sequence position, not every prompt token.
+- If generation runs without KV cache, later forwards may contain the full prompt plus generated tokens. The hook still steers the final position after the first prefill pass.
+- Saved vector payloads record the source layer. `generate_with_steering.py` checks that metadata so a vector built at one layer is not accidentally applied at another.
+- The included examples are intentionally small. For a real experiment, use a larger and more balanced contrast set, then sweep layers and alpha values.
