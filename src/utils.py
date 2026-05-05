@@ -44,12 +44,30 @@ def get_input_device(model: Any) -> Any:
 
     import torch
 
+    def map_value_to_device(device: Any) -> Any | None:
+        """Convert Accelerate device-map entries into valid torch devices."""
+
+        if isinstance(device, torch.device):
+            if device.type in {"cpu", "meta"}:
+                return None
+            return device
+
+        if isinstance(device, int):
+            return torch.device(f"cuda:{device}")
+
+        device_str = str(device)
+        if device_str in {"cpu", "disk", "meta"}:
+            return None
+        if device_str.isdigit():
+            return torch.device(f"cuda:{device_str}")
+        return torch.device(device_str)
+
     device_map = getattr(model, "hf_device_map", None)
     if isinstance(device_map, dict):
         for device in device_map.values():
-            device_str = str(device)
-            if device_str not in {"cpu", "disk", "meta"}:
-                return torch.device(device_str)
+            torch_device = map_value_to_device(device)
+            if torch_device is not None:
+                return torch_device
 
     try:
         return next(model.parameters()).device
