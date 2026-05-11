@@ -150,6 +150,17 @@ It reports:
 - Counts of simple horror-atmosphere keywords.
 - A reminder that proper evaluation would require stronger metrics.
 
+## Tests
+
+The automated tests are lightweight and do not download model weights. They cover prompt formatting, evaluation helpers, CLI help paths, transformer-layer discovery, and utility behavior such as `device_map` handling.
+
+```bash
+python -m pip install pytest
+pytest
+```
+
+GitHub Actions runs the same suite on pushes and pull requests to `main`.
+
 ## Implementation Notes
 
 - The generation hook skips the initial prompt prefill pass by default, then steers the last token representation on subsequent generation forwards. This keeps the prompt encoding mostly untouched while still working when cached generation is available.
